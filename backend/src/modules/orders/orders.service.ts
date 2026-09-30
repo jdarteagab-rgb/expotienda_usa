@@ -4,16 +4,19 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { OrderStatus } from '@prisma/client';
 
+// Servicio con la lógica de negocio de las órdenes
 @Injectable()
 export class OrdersService {
   constructor(private prisma: PrismaService) {}
 
+  // Crea una orden a partir de un listado de productos, validando stock y tienda
   async create(userId: number, createOrderDto: CreateOrderDto) {
     const { storeId, items } = createOrderDto;
 
     const store = await this.prisma.store.findUnique({ where: { id: storeId } });
     if (!store) throw new NotFoundException(`Tienda ${storeId} no existe`);
 
+    // Transacción: se descuenta stock y se crea la orden de forma atómica
     return this.prisma.$transaction(async (prisma) => {
       let total = 0;
       const orderItems: { productId: number; quantity: number; price: number }[] = [];
@@ -34,6 +37,7 @@ export class OrdersService {
           price: price,
         });
 
+        // Descontamos del stock la cantidad pedida
         await prisma.product.update({
           where: { id: item.productId },
           data: { stock: product.stock - item.quantity },
@@ -57,6 +61,7 @@ export class OrdersService {
     });
   }
 
+  // Lista las órdenes hechas por el usuario, de la más reciente a la más antigua
   async findMyOrders(userId: number) {
     return this.prisma.order.findMany({
       where: { buyerId: userId },
@@ -65,6 +70,7 @@ export class OrdersService {
     });
   }
 
+  // Devuelve una orden; solo el comprador o un ADMIN pueden verla
   async findOne(id: number, userId: number, userRole: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
@@ -81,6 +87,7 @@ export class OrdersService {
     return order;
   }
 
+  // Lista las órdenes de una tienda; solo el dueño o un ADMIN pueden verlas
   async findStoreOrders(storeId: number, userId: number, userRole: string) {
     const store = await this.prisma.store.findUnique({ where: { id: storeId } });
     if (!store) throw new NotFoundException(`Tienda ${storeId} no existe`);
@@ -94,13 +101,13 @@ export class OrdersService {
     });
   }
 
+  // Actualiza el estado de una orden; solo el dueño de la tienda o un ADMIN
   async updateStatus(id: number, updateOrderDto: UpdateOrderDto, userId: number, userRole: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: { store: true },
     });
     if (!order) throw new NotFoundException(`Orden ${id} no existe`);
-    // ✅ Permiso: solo el dueño de la tienda o ADMIN
     if (order.store.ownerId !== userId && userRole !== 'ADMIN') {
       throw new ForbiddenException('No tienes permiso para actualizar esta orden');
     }
@@ -111,6 +118,8 @@ export class OrdersService {
     });
   }
 
+  // Cancela una orden: solo el comprador o un ADMIN, dentro de las primeras 2 horas
+  // y siempre que la orden siga en estado PENDING. Devuelve el stock al inventario.
   async cancelOrder(id: number, userId: number, userRole: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
@@ -129,6 +138,7 @@ export class OrdersService {
     if (now.getTime() - new Date(order.createdAt).getTime() > twoHoursInMs) {
       throw new ForbiddenException('El tiempo para cancelar ha expirado (2 horas)');
     }
+    // Transacción: se restaura el stock y se marca la orden como cancelada
     return this.prisma.$transaction(async (prisma) => {
       for (const item of order.items) {
         await prisma.product.update({
