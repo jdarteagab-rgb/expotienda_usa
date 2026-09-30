@@ -2,10 +2,12 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../../prisma/prisma.service';
 import { AddToCartDto } from './dto/add-to-cart.dto';
 
+// Servicio con la lógica del carrito de compras
 @Injectable()
 export class CartService {
   constructor(private prisma: PrismaService) {}
 
+  // Busca el carrito del usuario o lo crea si no existe
   private async getOrCreateCart(userId: number) {
     let cart = await this.prisma.cart.findUnique({
       where: { userId },
@@ -26,6 +28,7 @@ export class CartService {
     return this.getOrCreateCart(userId);
   }
 
+  // Agrega un producto al carrito; valida que exista y que haya stock suficiente
   async addItem(userId: number, addToCartDto: AddToCartDto) {
     const { productId, quantity } = addToCartDto;
 
@@ -41,6 +44,7 @@ export class CartService {
 
     const cart = await this.getOrCreateCart(userId);
 
+    // Revisamos si el producto ya estaba en el carrito para sumar la cantidad
     const existingItem = await this.prisma.cartItem.findUnique({
       where: {
         cartId_productId: {
@@ -68,6 +72,7 @@ export class CartService {
     }
   }
 
+  // Actualiza la cantidad de un ítem; si la cantidad es 0 o menos, lo elimina
   async updateItem(userId: number, itemId: number, quantity: number) {
     const item = await this.prisma.cartItem.findFirst({
       where: {
@@ -96,6 +101,7 @@ export class CartService {
     });
   }
 
+  // Elimina un ítem específico del carrito del usuario
   async removeItem(userId: number, itemId: number) {
     const item = await this.prisma.cartItem.findFirst({
       where: {
@@ -111,6 +117,7 @@ export class CartService {
     return this.prisma.cartItem.delete({ where: { id: itemId } });
   }
 
+  // Vacía todos los ítems del carrito
   async clearCart(userId: number) {
     const cart = await this.getOrCreateCart(userId);
     return this.prisma.cartItem.deleteMany({
@@ -118,6 +125,7 @@ export class CartService {
     });
   }
 
+  // Convierte el carrito en una orden: valida stock, descuenta inventario y crea la orden
   async checkout(userId: number) {
     const cart = await this.getOrCreateCart(userId);
 
@@ -125,6 +133,7 @@ export class CartService {
       throw new ForbiddenException('El carrito está vacío');
     }
 
+    // Verificamos que todos los productos tengan stock antes de continuar
     for (const item of cart.items) {
       if (item.product.stock < item.quantity) {
         throw new ForbiddenException(
@@ -133,11 +142,13 @@ export class CartService {
       }
     }
 
+    // Usamos una transacción para asegurar que todo se guarde junto o nada se guarde
     return this.prisma.$transaction(async (prisma) => {
       const storeId = cart.items[0].product.storeId;
       let total = 0;
       const orderItems: { productId: number; quantity: number; price: number }[] = [];
 
+      // Recorremos los ítems: calculamos el total, descontamos stock y armamos el detalle
       for (const item of cart.items) {
         const price = Number(item.product.priceCOP);
         total += price * item.quantity;
@@ -153,6 +164,7 @@ export class CartService {
         });
       }
 
+      // Creamos la orden con sus ítems asociados
       const order = await prisma.order.create({
         data: {
           buyerId: userId,
@@ -164,6 +176,7 @@ export class CartService {
         include: { items: { include: { product: true } } },
       });
 
+      // Vaciamos el carrito después de generar la orden
       await prisma.cartItem.deleteMany({
         where: { cartId: cart.id },
       });
