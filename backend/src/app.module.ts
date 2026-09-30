@@ -12,6 +12,7 @@ import { UsersModule } from './modules/users/users.module';
 import { DistributorModule } from './modules/distributor/distributor.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 
+// Módulo raíz: aquí se registran todos los módulos de la aplicación
 @Module({
   imports: [PrismaModule, AuthModule, ProductsModule, StoresModule, OrdersModule, CartModule, AnalyticsModule, UsersModule, DistributorModule, CategoriesModule],
   controllers: [AppController],
